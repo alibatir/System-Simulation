@@ -1,0 +1,182 @@
+import simpy
+import random
+import math
+import numpy
+
+
+RANDOM_SEED = 978
+INTERARRIVAL_MEAN = 6 
+INTERARRIVAL_RATE = 1.0 / INTERARRIVAL_MEAN
+
+SERVICE_TIME_OPERATOR1_MEAN = 12
+SERVICE_TIME_OPERATOR_VARIENCE = 36
+mu= math.log(SERVICE_TIME_OPERATOR1_MEAN**2/math.sqrt(SERVICE_TIME_OPERATOR_VARIENCE+SERVICE_TIME_OPERATOR1_MEAN**2))
+sigma=math.sqrt(math.log(1+SERVICE_TIME_OPERATOR_VARIENCE /SERVICE_TIME_OPERATOR1_MEAN))
+
+
+SERVICE_TIME_OPERATOR2_MEAN = 4
+SERVICE_TIME_OPERATOR2_DEVIATION = math.sqrt(3)
+
+BREAK_TIME = 3
+BREAK_TIME_RATE = 1/60
+CUSTOMER_COUNT = 1000
+random.seed(RANDOM_SEED)
+
+
+# Duration of the conversation between the customer and the operator (Operator1 service time)
+service_times_operator1 = []
+
+# Duration of the conversation between the customer and the operator2 (operator2 service time)
+service_times_operator2 = []
+
+# Time spent by a customer while it waits for the operator1 (Operator1 Queue waiting time)
+queue_w_times_operator1 = []
+
+# Time spent by a customer while it waits for the operator2 (operator2 Queue waiting time)
+queue_w_times_operator2 = []
+
+# Simulation end time
+end_time = 0;
+
+
+
+class Customer(object):
+    def __init__(self, name, env, operator1, operator2):
+        self.env = env
+        self.name = name
+        self.arrival_t = self.env.now
+        self.action = env.process(self.call())
+    
+    def call(self):
+        print('%s initiated a call at %g' % (self.name, self.env.now))
+        global end_time 
+        prob=random.uniform(0,10)
+        print(prob)
+        if prob<3:    
+            yield self.env.process(self.call1())
+        if prob>=3:    
+            yield self.env.process(self.call2())
+              
+            
+            
+    def call1(self):
+        
+        with operator1.request() as req:
+            yield req
+            print('%s is assigned to a operator1 at %g' % (self.name, self.env.now))
+            queue_w_times_operator1.append(self.env.now - self.arrival_t)
+            yield self.env.process(self.get_help1_operator1())
+            print('%s is done operator1 at %g' % (self.name, self.env.now))
+            self.end_time = self.env.now
+
+    def call2(self):
+        
+        with operator2.request() as req:
+            yield req
+            print('%s is assigned to a operator2 at %g' % (self.name, self.env.now))
+            queue_w_times_operator2.append(self.env.now - self.arrival_t)
+            yield self.env.process(self.get_help2_operator2())
+            print('%s is done operator2 at %g' % (self.name, self.env.now))
+            self.end_time = self.env.now
+
+
+            
+
+    def get_help1_operator1(self):
+        duration = numpy.random.lognormal(mu, sigma)
+        while duration < 0:
+            duration = numpy.random.lognormal(mu, sigma)
+
+        yield self.env.timeout(duration)
+        service_times_operator1.append(duration)
+        
+    def get_help2_operator2(self):
+        duration = random.gauss(SERVICE_TIME_OPERATOR2_MEAN, SERVICE_TIME_OPERATOR2_DEVIATION)
+        while duration < 0:
+            duration = random.gauss(SERVICE_TIME_OPERATOR2_MEAN, SERVICE_TIME_OPERATOR2_DEVIATION)
+            
+        yield self.env.timeout(duration)
+        service_times_operator2.append(duration)
+
+
+
+
+
+
+class CustomerNorm(Customer):
+    """ Customer that has normally distributed expert service"""
+    def get_help1_operator1(self):
+        duration = random.gauss(mu, sigma)
+        while duration < 0:
+            duration = random.gauss(mu, sigma)
+            
+        yield self.env.timeout(duration)
+        service_times_operator1.append(duration)
+        
+    def get_help_operator2(self):
+        duration = random.gauss(SERVICE_TIME_OPERATOR2_MEAN, SERVICE_TIME_OPERATOR2_DEVIATION)
+        while duration < 0:
+            duration = random.gauss(SERVICE_TIME_OPERATOR2_MEAN, SERVICE_TIME_OPERATOR2_DEVIATION)
+            
+        yield self.env.timeout(duration)
+        service_times_operator2.append(duration)
+
+
+
+
+
+
+
+def customer_generator(env, operator1, operator2):
+    """Generate new customer that call to call center."""
+    for i in range(CUSTOMER_COUNT):
+        yield env.timeout(random.expovariate(INTERARRIVAL_RATE))
+        customer = Customer('Customer %s' %(i+1), env, operator1, operator2)
+        
+        
+        
+        
+        
+        def customer_norm_generator(env, operator1, operator2):
+    """Generate new customer with normally distributed expert service that call to call center."""
+    for i in range(CUSTOMER_COUNT):
+        yield env.timeout(random.expovariate(INTERARRIVAL_RATE))
+        customer = CustomerNorm('Customer %s' %(i+1), env, operator1, operator2)  
+        
+        
+        
+        
+        def break_generator(env, operator1, operator2):
+    """Generate new break for expert."""
+    while True:
+        if len(queue_w_times_operator1) == CUSTOMER_COUNT:
+            break
+        yield env.timeout(random.expovariate(BREAK_TIME_RATE))
+        with operator1.request() as req:
+            yield req
+            print('Operator1 gives break at %g' % (env.now))
+            yield env.timeout(BREAK_TIME)
+            print('Operator1 break done at %g' % (env.now))
+
+
+        if len(queue_w_times_operator2) == CUSTOMER_COUNT:
+            break
+        yield env.timeout(random.expovariate(BREAK_TIME_RATE))
+        with operator2.request() as req:
+            yield req
+            print('Operator2 gives break at %g' % (env.now))
+            yield env.timeout(BREAK_TIME)
+            print('Operator2 break done at %g' % (env.now))
+
+
+
+
+
+
+
+env = simpy.Environment()
+operator1 = simpy.Resource(env, capacity = 1)
+operator2 = simpy.Resource(env, capacity = 1)
+env.process(customer_generator(env, operator1, operator2))
+env.process(break_generator(env, operator1, operator2))
+env.run()
